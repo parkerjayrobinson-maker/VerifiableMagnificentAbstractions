@@ -364,11 +364,34 @@ new GLTFLoader().load('/map',
 );
 
 // ─── Load soldier ────────────────────────────────────────────
+// Synty PSD textures can't load in browser — apply solid military materials
+const SOLDIER_MATS = [
+  new THREE.MeshLambertMaterial({ color: 0x4a6b2a }),  // body — OD green
+  new THREE.MeshLambertMaterial({ color: 0x3d5220 }),  // jacket — dark green
+  new THREE.MeshLambertMaterial({ color: 0x8b7355 }),  // skin — tan
+  new THREE.MeshLambertMaterial({ color: 0x2a2a2a }),  // boots/gear — near black
+  new THREE.MeshLambertMaterial({ color: 0x5a4a30 }),  // belt/straps — brown
+];
 new FBXLoader().load('/soldier',
   (fbx) => {
-    fbx.traverse(c => { if (c.isMesh) { c.castShadow = c.receiveShadow = true; } });
+    let matIdx = 0;
+    fbx.traverse(c => {
+      if (c.isMesh) {
+        c.castShadow = true;
+        c.receiveShadow = true;
+        // Replace the unsupported PSD texture with a solid military colour
+        const mat = SOLDIER_MATS[matIdx % SOLDIER_MATS.length];
+        if (Array.isArray(c.material)) {
+          c.material = c.material.map(() => { matIdx++; return SOLDIER_MATS[matIdx % SOLDIER_MATS.length]; });
+        } else {
+          c.material = mat;
+          matIdx++;
+        }
+      }
+    });
+    // Scale so the model stands ~1.9 units tall (visible from a distance)
     const h = new THREE.Box3().setFromObject(fbx).getSize(new THREE.Vector3()).y;
-    const s = 1.8 / (h || 1.8);
+    const s = 1.9 / (h || 1.9);
     fbx.scale.set(s, s, s);
     soldierTemplate = fbx;
     onLoaded();
@@ -598,23 +621,38 @@ function spawnEnemy(position) {
   let obj;
   if (soldierTemplate) {
     obj = soldierTemplate.clone();
+    // Re-apply materials on the clone so each enemy has its own material instances
+    let matIdx = 0;
+    obj.traverse(c => {
+      if (c.isMesh) {
+        if (Array.isArray(c.material)) {
+          c.material = c.material.map(() => SOLDIER_MATS[(matIdx++) % SOLDIER_MATS.length].clone());
+        } else {
+          c.material = SOLDIER_MATS[(matIdx++) % SOLDIER_MATS.length].clone();
+        }
+        c.castShadow = true;
+        c.receiveShadow = true;
+      }
+    });
     if (soldierTemplate.animations?.length) {
       const mx = new THREE.AnimationMixer(obj);
-      mx.clipAction(soldierTemplate.animations[0]).play();
+      // Pick a walk/run animation if available, else use first
+      const clip = soldierTemplate.animations.find(a =>
+        /walk|run|move/i.test(a.name)
+      ) || soldierTemplate.animations[0];
+      mx.clipAction(clip).play();
       obj.userData.mixer = mx;
     }
   } else {
+    // Emergency fallback — bright-red capsule so it's obviously visible
     const g = new THREE.Group();
-    const m = new THREE.MeshLambertMaterial({ color: 0x4a7a3a });
-    const body = new THREE.Mesh(new THREE.BoxGeometry(0.5,0.8,0.3), m); body.position.y = 0.9;
-    const head = new THREE.Mesh(new THREE.BoxGeometry(0.4,0.4,0.4), m); head.position.y = 1.6;
-    [[-.35,0.9],[.35,0.9]].forEach(([x,y]) => {
-      g.add(Object.assign(new THREE.Mesh(new THREE.BoxGeometry(0.2,0.7,0.2),m), {position: new THREE.Vector3(x,y,0)}));
-    });
-    [[-.15,0.4],[.15,0.4]].forEach(([x,y]) => {
-      g.add(Object.assign(new THREE.Mesh(new THREE.BoxGeometry(0.2,0.8,0.2),m), {position: new THREE.Vector3(x,y,0)}));
-    });
-    g.add(body, head); obj = g;
+    const mat = new THREE.MeshLambertMaterial({ color: 0xcc2222 });
+    const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 1.0, 8), mat);
+    torso.position.y = 0.9;
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.22, 8, 8), mat);
+    head.position.y = 1.65;
+    g.add(torso, head);
+    obj = g;
   }
 
   obj.position.copy(position);
@@ -629,7 +667,7 @@ function spawnEnemy(position) {
   const hbFil = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0xff2222, side: THREE.DoubleSide }));
   hbFil.position.z = 0.001;
   const hbGrp = new THREE.Group();
-  hbGrp.add(hbBg, hbFil); hbGrp.position.set(0, 2.2, 0);
+  hbGrp.add(hbBg, hbFil); hbGrp.position.set(0, 2.5, 0);
   obj.add(hbGrp);
   obj.userData.hbarFill = hbFil; obj.userData.hbarGroup = hbGrp;
 
@@ -639,14 +677,19 @@ function spawnEnemy(position) {
 
 function getSpawnPos() {
   const b = window._mapBounds;
-  const a = Math.random() * Math.PI * 2, d = 15 + Math.random() * 20;
+  const a = Math.random() * Math.PI * 2;
+  // Spawn closer in early waves so enemies are immediately visible
+  const minDist = 8 + wave * 0.5;
+  const maxDist = 16 + wave * 1.0;
+  const d = minDist + Math.random() * (maxDist - minDist);
   let x = playerPos.x + Math.cos(a) * d;
   let z = playerPos.z + Math.sin(a) * d;
   if (b) {
     x = Math.max(b.min.x+2, Math.min(b.max.x-2, x));
     z = Math.max(b.min.z+2, Math.min(b.max.z-2, z));
   }
-  return new THREE.Vector3(x, 5, z);
+  // Start slightly above ground; gravity pulls them down
+  return new THREE.Vector3(x, 2, z);
 }
 
 // ─── Wave system ─────────────────────────────────────────────
@@ -948,7 +991,10 @@ function animate() {
     const e = enemies[i];
     if (!e.userData.alive) continue;
     if (e.userData.mixer) e.userData.mixer.update(dt);
-    e.position.y = Math.max(0, e.position.y - 10 * dt);
+    // Simple gravity — drop toward map floor, clamp at ground level
+    if (e.position.y > 0.05) {
+      e.position.y = Math.max(0, e.position.y - 12 * dt);
+    }
     if (e.userData.hbarGroup) e.userData.hbarGroup.quaternion.copy(camera.quaternion);
 
     tp.subVectors(playerPos, e.position);
