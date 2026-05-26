@@ -303,6 +303,9 @@ const keys = {};
 const playerPos  = controls.getObject().position;
 const collidables = [], enemies = [];
 let soldierTemplate = null, gunPivot = null, gunModelGroup = null;
+let playerBody = null, playerBodyMixer = null;
+let playerBodyWalkAction = null, playerBodyIdleAction = null;
+let prevIsWalking = false;
 
 const floorRay    = new THREE.Raycaster(new THREE.Vector3(), new THREE.Vector3(0,-1,0), 0, 3);
 const wallRay     = new THREE.Raycaster();
@@ -394,11 +397,49 @@ new FBXLoader().load('/soldier',
     const s = 1.9 / (h || 1.9);
     fbx.scale.set(s, s, s);
     soldierTemplate = fbx;
+    createPlayerBody();
     onLoaded();
   },
   xhr => onProgress('Soldier', xhr.loaded/(xhr.total||1)),
   () => onLoaded()
 );
+
+// ─── Player visible body ──────────────────────────────────────
+function createPlayerBody() {
+  if (!soldierTemplate || playerBody) return;
+  playerBody = soldierTemplate.clone();
+  let matIdx = 0;
+  playerBody.traverse(c => {
+    if (c.isMesh) {
+      if (Array.isArray(c.material)) {
+        c.material = c.material.map(() => SOLDIER_MATS[(matIdx++) % SOLDIER_MATS.length].clone());
+      } else {
+        c.material = SOLDIER_MATS[(matIdx++) % SOLDIER_MATS.length].clone();
+      }
+      c.castShadow = true;
+      c.receiveShadow = true;
+      // Hide head/neck so the first-person camera doesn't clip through it
+      const n = (c.name || '').toLowerCase();
+      if (/head|neck|helmet|hat|face|hair/.test(n)) c.visible = false;
+    }
+  });
+  scene.add(playerBody);
+
+  if (soldierTemplate.animations?.length) {
+    playerBodyMixer = new THREE.AnimationMixer(playerBody);
+    const walkClip = soldierTemplate.animations.find(a => /walk|run|move/i.test(a.name))
+                  || soldierTemplate.animations[0];
+    const idleClip = soldierTemplate.animations.find(a => /idle|stand/i.test(a.name));
+    playerBodyWalkAction = playerBodyMixer.clipAction(walkClip);
+    if (idleClip) {
+      playerBodyIdleAction = playerBodyMixer.clipAction(idleClip);
+      playerBodyIdleAction.play();
+    } else {
+      // Only one animation — just play it always
+      playerBodyWalkAction.play();
+    }
+  }
+}
 
 // ─── Load all 6 guns ─────────────────────────────────────────
 const fbxGunLoader = new FBXLoader();
@@ -1011,6 +1052,29 @@ function animate() {
         e.userData.attackTimer = ENEMY_ATTACK_RATE;
       }
     }
+  }
+
+  // ── Player visible body — follow camera position & yaw ──
+  if (playerBody) {
+    playerBody.position.set(playerPos.x, playerPos.y - PLAYER_HEIGHT, playerPos.z);
+    // Derive yaw from the flat camera forward direction (already computed above)
+    playerBody.rotation.y = Math.atan2(camDir.x, camDir.z) + Math.PI;
+  }
+  if (playerBodyMixer) playerBodyMixer.update(dt);
+
+  // Walk ↔ idle animation switch
+  const nowWalking = moveDir.lengthSq() > 0;
+  if (nowWalking !== prevIsWalking) {
+    if (playerBodyWalkAction && playerBodyIdleAction) {
+      if (nowWalking) {
+        playerBodyIdleAction.fadeOut(0.2);
+        playerBodyWalkAction.reset().fadeIn(0.2).play();
+      } else {
+        playerBodyWalkAction.fadeOut(0.2);
+        playerBodyIdleAction.reset().fadeIn(0.2).play();
+      }
+    }
+    prevIsWalking = nowWalking;
   }
 
   renderer.render(scene, camera);
