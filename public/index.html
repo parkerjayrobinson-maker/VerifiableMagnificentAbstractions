@@ -306,6 +306,7 @@ let soldierTemplate = null, gunPivot = null, gunModelGroup = null;
 let playerBody = null, playerBodyMixer = null;
 let playerBodyWalkAction = null, playerBodyIdleAction = null;
 let prevIsWalking = false;
+let fpsArms = null, fpsArmsMixer = null;
 
 const floorRay    = new THREE.Raycaster(new THREE.Vector3(), new THREE.Vector3(0,-1,0), 0, 3);
 const wallRay     = new THREE.Raycaster();
@@ -441,6 +442,55 @@ function createPlayerBody() {
   }
 }
 
+// ─── FPS Arms — soldier model attached to camera, renders on top ──
+function createFPSArms() {
+  if (!soldierTemplate || fpsArms) return;
+  fpsArms = soldierTemplate.clone();
+  let matIdx = 0;
+
+  fpsArms.traverse(c => {
+    if (c.isMesh) {
+      // Apply military materials that always draw on top of scene geometry
+      if (Array.isArray(c.material)) {
+        c.material = c.material.map(() => {
+          const m = SOLDIER_MATS[(matIdx++) % SOLDIER_MATS.length].clone();
+          m.depthTest = false; m.depthWrite = false;
+          return m;
+        });
+      } else {
+        const m = SOLDIER_MATS[(matIdx++) % SOLDIER_MATS.length].clone();
+        m.depthTest = false; m.depthWrite = false;
+        c.material = m;
+      }
+      c.renderOrder = 999;
+
+      // Try to hide non-arm body parts by common bone/mesh name patterns
+      const n = (c.name || '').toLowerCase();
+      if (/head|neck|helmet|hat|face|hair|torso|chest|spine|pelvis|hip|leg|thigh|shin|calf|foot|toe/.test(n)) {
+        c.visible = false;
+      }
+    }
+  });
+
+  // Position relative to camera so arms rise from the bottom of the screen.
+  // Model is 1.9 units tall; wrists sit ~1.15 units from feet.
+  // Offset Y so wrists align with gun pivot Y (-0.28).
+  // Face the same direction as camera: rotation.y = PI flips +Z model → -Z (forward).
+  fpsArms.position.set(0.04, -1.43, 0.38);
+  fpsArms.rotation.set(0, Math.PI, 0);
+
+  // Attach to camera so it always stays in view
+  camera.add(fpsArms);
+
+  // Play an aim/idle animation if the FBX has one
+  if (soldierTemplate.animations?.length) {
+    fpsArmsMixer = new THREE.AnimationMixer(fpsArms);
+    const clip = soldierTemplate.animations.find(a => /aim|idle|stand/i.test(a.name))
+              || soldierTemplate.animations[0];
+    fpsArmsMixer.clipAction(clip).play();
+  }
+}
+
 // ─── Load all 6 guns ─────────────────────────────────────────
 const fbxGunLoader = new FBXLoader();
 const objLoader    = new OBJLoader();
@@ -520,40 +570,6 @@ function updateHotbarActive(idx) {
   });
 }
 
-// ─── Hand geometry ────────────────────────────────────────────
-function createGloveHand(isRight) {
-  const g = new THREE.Group();
-  const glov = new THREE.MeshLambertMaterial({ color: 0x111111 });
-  const slv  = new THREE.MeshLambertMaterial({ color: 0x3a5a22 });
-
-  const palm = new THREE.Mesh(new THREE.BoxGeometry(0.088, 0.110, 0.072), glov); g.add(palm);
-  const knu  = new THREE.Mesh(new THREE.BoxGeometry(0.092, 0.018, 0.020), glov);
-  knu.position.set(0, 0.062, -0.020); g.add(knu);
-
-  const fxs = [-0.031, -0.010, 0.011, 0.032];
-  for (let i = 0; i < 4; i++) {
-    const fx = fxs[i];
-    const p1 = new THREE.Mesh(new THREE.BoxGeometry(0.019, 0.048, 0.019), glov);
-    p1.position.set(fx, 0.076, -0.012); p1.rotation.x = -0.65; g.add(p1);
-    const p2 = new THREE.Mesh(new THREE.BoxGeometry(0.017, 0.040, 0.017), glov);
-    p2.position.set(fx, 0.096, -0.042); p2.rotation.x = -1.30; g.add(p2);
-    const p3 = new THREE.Mesh(new THREE.BoxGeometry(0.015, 0.030, 0.015), glov);
-    p3.position.set(fx, 0.096, -0.070); p3.rotation.x = -1.70; g.add(p3);
-  }
-  const ts = isRight ? 1 : -1;
-  const tb = new THREE.Mesh(new THREE.BoxGeometry(0.024, 0.038, 0.024), glov);
-  tb.position.set(ts*0.050, 0.022, -0.006); tb.rotation.z = ts*-0.45; tb.rotation.x = -0.2; g.add(tb);
-  const tt = new THREE.Mesh(new THREE.BoxGeometry(0.020, 0.034, 0.020), glov);
-  tt.position.set(ts*0.062, 0.052, -0.028); tt.rotation.z = ts*-0.30; tt.rotation.x = -0.55; g.add(tt);
-
-  const wr = new THREE.Mesh(new THREE.BoxGeometry(0.082, 0.072, 0.068), glov);
-  wr.position.set(0, -0.088, 0); g.add(wr);
-  const fa = new THREE.Mesh(new THREE.BoxGeometry(0.078, 0.240, 0.068), slv);
-  fa.position.set(0, -0.256, 0); g.add(fa);
-  const ua = new THREE.Mesh(new THREE.BoxGeometry(0.082, 0.360, 0.072), slv);
-  ua.position.set(0, -0.492, 0); g.add(ua);
-  return g;
-}
 
 // ─── Place gun model into pivot ───────────────────────────────
 function placeGunModel(idx) {
@@ -590,35 +606,17 @@ function placeGunModel(idx) {
 
   gunPivot.add(gunModelGroup);
 
-  // Compute hand attachment points from bounding box
-  const box = new THREE.Box3().setFromObject(gunModelGroup);
-  const sz  = box.getSize(new THREE.Vector3());
-  const gripZ    =  sz.z * 0.28;
-  const foregrip = -sz.z * 0.26;
-  gunPivot.userData.rightHand.position.set( 0.010, -0.055, gripZ);
-  gunPivot.userData.leftHand.position.set(-0.055,  0.005, foregrip);
 }
 
 // ─── Setup gun pivot (once, on game start) ────────────────────
 function setupGun() {
   gunPivot = new THREE.Group();
   camera.add(gunPivot);
-  gunPivot.position.set(0.07, -0.30, -0.38);
-
-  // Right hand — trigger grip
-  const rh = createGloveHand(true);
-  rh.rotation.set(-Math.PI * 0.48, 0.18, -Math.PI / 2);
-  gunPivot.add(rh);
-  gunPivot.userData.rightHand = rh;
-
-  // Left hand — foregrip
-  const lh = createGloveHand(false);
-  lh.rotation.set(-Math.PI * 0.38, -0.28, Math.PI / 2);
-  gunPivot.add(lh);
-  gunPivot.userData.leftHand = lh;
-
+  // Gun sits slightly right/down — arms will reach up from below
+  gunPivot.position.set(0.06, -0.28, -0.24);
   gunPivot.userData.restRotX = 0;
 
+  createFPSArms();
   placeGunModel(currentWeaponIdx);
   updateWeaponUI();
   buildHotbar();
@@ -1061,6 +1059,7 @@ function animate() {
     playerBody.rotation.y = Math.atan2(camDir.x, camDir.z) + Math.PI;
   }
   if (playerBodyMixer) playerBodyMixer.update(dt);
+  if (fpsArmsMixer)   fpsArmsMixer.update(dt);
 
   // Walk ↔ idle animation switch
   const nowWalking = moveDir.lengthSq() > 0;
