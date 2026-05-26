@@ -259,6 +259,7 @@ renderer.setPixelRatio(window.devicePixelRatio);
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.localClippingEnabled = true;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.0;
 document.body.appendChild(renderer.domElement);
@@ -405,10 +406,39 @@ new FBXLoader().load('/soldier',
   () => onLoaded()
 );
 
+// ─── Proper SkinnedMesh clone — rebinds skeleton so clones actually render ──
+function cloneSkinnedModel(source) {
+  const clone = source.clone();
+
+  const srcBones = {}, srcSkinned = {};
+  const clnBones = {}, clnSkinned = {};
+
+  source.traverse(n => {
+    if (n.isBone)        srcBones[n.name]   = n;
+    if (n.isSkinnedMesh) srcSkinned[n.name] = n;
+  });
+  clone.traverse(n => {
+    if (n.isBone)        clnBones[n.name]   = n;
+    if (n.isSkinnedMesh) clnSkinned[n.name] = n;
+  });
+
+  for (const name in srcSkinned) {
+    const src = srcSkinned[name];
+    const cln = clnSkinned[name];
+    if (!cln) continue;
+    const orderedBones = src.skeleton.bones.map(b => clnBones[b.name] || b);
+    cln.bind(
+      new THREE.Skeleton(orderedBones, src.skeleton.boneInverses),
+      cln.matrixWorld
+    );
+  }
+  return clone;
+}
+
 // ─── Player visible body ──────────────────────────────────────
 function createPlayerBody() {
   if (!soldierTemplate || playerBody) return;
-  playerBody = soldierTemplate.clone();
+  playerBody = cloneSkinnedModel(soldierTemplate);
   let matIdx = 0;
   playerBody.traverse(c => {
     if (c.isMesh) {
@@ -442,47 +472,40 @@ function createPlayerBody() {
   }
 }
 
-// ─── FPS Arms — soldier model attached to camera, renders on top ──
+// ─── FPS Arms — soldier model arms clipped to only show hand/forearm area ──
 function createFPSArms() {
   if (!soldierTemplate || fpsArms) return;
-  fpsArms = soldierTemplate.clone();
+  fpsArms = cloneSkinnedModel(soldierTemplate);
   let matIdx = 0;
+
+  // Clip plane in VIEW (camera) space: only show the lower portion of the screen.
+  // Normal (0,-1,0) with constant -0.08 means: visible where -y - 0.08 >= 0 → y <= -0.08.
+  // This hides the head and upper torso, keeping only the arms/hands region.
+  const upperClip = new THREE.Plane(new THREE.Vector3(0, -1, 0), -0.08);
 
   fpsArms.traverse(c => {
     if (c.isMesh) {
-      // Apply military materials that always draw on top of scene geometry
       if (Array.isArray(c.material)) {
         c.material = c.material.map(() => {
           const m = SOLDIER_MATS[(matIdx++) % SOLDIER_MATS.length].clone();
+          m.clippingPlanes = [upperClip];
           m.depthTest = false; m.depthWrite = false;
           return m;
         });
       } else {
         const m = SOLDIER_MATS[(matIdx++) % SOLDIER_MATS.length].clone();
+        m.clippingPlanes = [upperClip];
         m.depthTest = false; m.depthWrite = false;
         c.material = m;
       }
       c.renderOrder = 999;
-
-      // Try to hide non-arm body parts by common bone/mesh name patterns
-      const n = (c.name || '').toLowerCase();
-      if (/head|neck|helmet|hat|face|hair|torso|chest|spine|pelvis|hip|leg|thigh|shin|calf|foot|toe/.test(n)) {
-        c.visible = false;
-      }
     }
   });
 
-  // Position relative to camera so arms rise from the bottom of the screen.
-  // Model is 1.9 units tall; wrists sit ~1.15 units from feet.
-  // Offset Y so wrists align with gun pivot Y (-0.28).
-  // Face the same direction as camera: rotation.y = PI flips +Z model → -Z (forward).
   fpsArms.position.set(0.04, -1.43, 0.38);
   fpsArms.rotation.set(0, Math.PI, 0);
-
-  // Attach to camera so it always stays in view
   camera.add(fpsArms);
 
-  // Play an aim/idle animation if the FBX has one
   if (soldierTemplate.animations?.length) {
     fpsArmsMixer = new THREE.AnimationMixer(fpsArms);
     const clip = soldierTemplate.animations.find(a => /aim|idle|stand/i.test(a.name))
@@ -659,7 +682,7 @@ function updateWeaponUI() {
 function spawnEnemy(position) {
   let obj;
   if (soldierTemplate) {
-    obj = soldierTemplate.clone();
+    obj = cloneSkinnedModel(soldierTemplate);
     // Re-apply materials on the clone so each enemy has its own material instances
     let matIdx = 0;
     obj.traverse(c => {
