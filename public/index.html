@@ -152,6 +152,25 @@
       font-family: inherit; text-transform: uppercase;
     }
     #game-over button:hover { background: #cc2222; }
+  /* ── Multiplayer UI ─────────────────────────────────────── */
+  #mp-section { margin-top: 1.4rem; border-top: 1px solid #333; padding-top: 1rem; }
+  #mp-divider { color: #555; font-size: 0.75rem; letter-spacing: 0.25em; margin-bottom: 0.9rem; }
+  #mp-row { display: flex; gap: 0.7rem; align-items: center; justify-content: center; flex-wrap: wrap; }
+  #mp-create-btn, #mp-join-btn {
+    background: #1a1a2e; color: #eee; border: 1px solid #555;
+    padding: 0.5rem 1.1rem; font-size: 0.85rem; cursor: pointer; letter-spacing: 0.1em;
+    transition: background 0.2s;
+  }
+  #mp-create-btn:hover, #mp-join-btn:hover { background: #cc2222; border-color: #cc2222; }
+  #join-code-input {
+    background: #111; color: #fff; border: 1px solid #555; padding: 0.5rem 0.8rem;
+    font-size: 1rem; letter-spacing: 0.25em; text-transform: uppercase; width: 130px;
+    text-align: center;
+  }
+  #room-code-display { margin-top: 0.8rem; color: #aaa; font-size: 0.85rem; line-height: 1.8; }
+  #room-code-text { font-size: 2rem; font-weight: bold; color: #ff4444; letter-spacing: 0.3em; display: block; }
+  #mp-status { color: #888; font-size: 0.8rem; margin-top: 0.6rem; min-height: 1.2em; }
+  #mp-players { color: #5fa; font-size: 0.8rem; margin-top: 0.3rem; }
   </style>
 </head>
 <body>
@@ -172,6 +191,21 @@
     1–6 / Scroll — Switch Weapon
   </div>
   <button id="start-btn">CLICK TO PLAY</button>
+
+  <div id="mp-section">
+    <div id="mp-divider">── MULTIPLAYER ──</div>
+    <div id="mp-row">
+      <button id="mp-create-btn">HOST GAME</button>
+      <input id="join-code-input" type="text" maxlength="6" placeholder="ROOM CODE" />
+      <button id="mp-join-btn">JOIN GAME</button>
+    </div>
+    <div id="room-code-display" style="display:none">
+      <span id="room-code-text"></span>
+      <small>Share this code — friends enter it to join</small>
+    </div>
+    <div id="mp-status"></div>
+    <div id="mp-players"></div>
+  </div>
 </div>
 
 <div id="hud">
@@ -220,6 +254,7 @@
   <button id="restart-btn">PLAY AGAIN</button>
 </div>
 
+<script src="/socket.io/socket.io.js"></script>
 <script type="importmap">
 {
   "imports": {
@@ -239,10 +274,10 @@ import { MTLLoader }    from 'three/addons/loaders/MTLLoader.js';
 // ─── Weapon definitions ───────────────────────────────────────
 const WEAPONS = [
   { name: 'ASSAULT RIFLE', short: 'AR-1',  icon: '🔫', route: '/gun/ar1',     mtl: '/gun/ar1.mtl',     loaderType: 'obj', damage: 28,  fireRate: 0.10, ammoMax: 30, reserveMax: 120, reloadTime: 2.0, scale: 0.50, color: '#5c9933' },
-  { name: 'ASSAULT RIFLE 2',short:'AR-2',  icon: '🔫', route: '/gun/ar2',     mtl: null,               loaderType: 'fbx', damage: 32,  fireRate: 0.12, ammoMax: 30, reserveMax: 120, reloadTime: 2.2, scale: 0.50, color: '#99cc55' },
-  { name: 'SUBMACHINE GUN', short: 'SMG',  icon: '🔫', route: '/gun/smg',     mtl: null,               loaderType: 'fbx', damage: 18,  fireRate: 0.07, ammoMax: 40, reserveMax: 200, reloadTime: 1.5, scale: 0.45, color: '#55aacc' },
+  { name: 'ASSAULT RIFLE 2',short:'AR-2',  icon: '🔫', route: '/gun/ar2',     mtl: null,               loaderType: 'fbx', damage: 32,  fireRate: 0.12, ammoMax: 30, reserveMax: 120, reloadTime: 2.2, scale: 0.50, color: '#99cc55', rotFix: [0, Math.PI/2, 0] },
+  { name: 'SUBMACHINE GUN', short: 'SMG',  icon: '🔫', route: '/gun/smg',     mtl: null,               loaderType: 'fbx', damage: 18,  fireRate: 0.07, ammoMax: 40, reserveMax: 200, reloadTime: 1.5, scale: 0.45, color: '#55aacc', rotFix: [0, Math.PI/2, 0] },
   { name: 'SHOTGUN',        short: 'SHTGN',icon: '🔫', route: '/gun/shotgun', mtl: null,               loaderType: 'fbx', damage: 85,  fireRate: 0.85, ammoMax:  8, reserveMax:  32, reloadTime: 2.5, scale: 0.52, color: '#cc5555' },
-  { name: 'SNIPER RIFLE',   short: 'SNPR', icon: '🔫', route: '/gun/sniper',  mtl: null,               loaderType: 'fbx', damage: 150, fireRate: 1.50, ammoMax:  5, reserveMax:  20, reloadTime: 3.0, scale: 0.55, color: '#ccaa44' },
+  { name: 'SNIPER RIFLE',   short: 'SNPR', icon: '🔫', route: '/gun/sniper',  mtl: null,               loaderType: 'fbx', damage: 150, fireRate: 1.50, ammoMax:  5, reserveMax:  20, reloadTime: 3.0, scale: 0.55, color: '#ccaa44', rotFix: [0, Math.PI/2, 0] },
   { name: 'PISTOL',         short: 'PSTL', icon: '🔫', route: '/gun/pistol',  mtl: '/gun/pistol.mtl',  loaderType: 'obj', damage: 40,  fireRate: 0.30, ammoMax: 12, reserveMax:  48, reloadTime: 1.2, scale: 0.40, color: '#aa55cc' },
 ];
 
@@ -308,6 +343,9 @@ let playerBody = null, playerBodyMixer = null;
 let playerBodyWalkAction = null, playerBodyIdleAction = null;
 let prevIsWalking = false;
 let fpsArms = null, fpsArmsMixer = null;
+let socket = null, myPlayerId = null;
+const remotePlayers = new Map(); // socketId → { body, mixer, lastRot }
+let mpSendTimer = 0;
 
 const floorRay    = new THREE.Raycaster(new THREE.Vector3(), new THREE.Vector3(0,-1,0), 0, 3);
 const wallRay     = new THREE.Raycaster();
@@ -514,6 +552,99 @@ function createFPSArms() {
   }
 }
 
+// ─── Remote player management ────────────────────────────────
+function addRemotePlayer(id, pos) {
+  if (remotePlayers.has(id) || !soldierTemplate) return;
+  const body = cloneSkinnedModel(soldierTemplate);
+  let mi = 0;
+  body.traverse(c => {
+    if (c.isMesh) {
+      c.material = Array.isArray(c.material)
+        ? c.material.map(() => SOLDIER_MATS[(mi++) % SOLDIER_MATS.length].clone())
+        : SOLDIER_MATS[(mi++) % SOLDIER_MATS.length].clone();
+      c.castShadow = true;
+    }
+  });
+  body.position.set(pos.x, pos.y - PLAYER_HEIGHT, pos.z);
+  scene.add(body);
+  let mixer = null;
+  if (soldierTemplate.animations?.length) {
+    mixer = new THREE.AnimationMixer(body);
+    mixer.clipAction(soldierTemplate.animations[0]).play();
+  }
+  // Name tag
+  remotePlayers.set(id, { body, mixer, rot: 0 });
+  refreshMpPlayerList();
+}
+
+function updateRemotePlayer(id, pos, rot) {
+  const rp = remotePlayers.get(id);
+  if (!rp) return;
+  rp.body.position.set(pos.x, pos.y - PLAYER_HEIGHT, pos.z);
+  rp.body.rotation.y = rot + Math.PI;
+  rp.rot = rot;
+}
+
+function removeRemotePlayer(id) {
+  const rp = remotePlayers.get(id);
+  if (!rp) return;
+  scene.remove(rp.body);
+  remotePlayers.delete(id);
+  refreshMpPlayerList();
+}
+
+function refreshMpPlayerList() {
+  const el = document.getElementById('mp-players');
+  if (!el) return;
+  const count = remotePlayers.size;
+  el.textContent = count > 0 ? `${count} friend${count > 1 ? 's' : ''} in room` : '';
+}
+
+// ─── Multiplayer init (called once socket.io script loaded) ──
+function initMultiplayer() {
+  if (typeof io === 'undefined') return;
+  socket = io({ transports: ['websocket', 'polling'] });
+
+  socket.on('player-joined', ({ id, pos }) => {
+    addRemotePlayer(id, pos);
+    setMpStatus(`A friend joined!`);
+  });
+  socket.on('player-update', ({ id, pos, rot }) => {
+    updateRemotePlayer(id, pos, rot);
+  });
+  socket.on('player-left', ({ id }) => {
+    removeRemotePlayer(id);
+    setMpStatus(`A friend left the room.`);
+  });
+
+  document.getElementById('mp-create-btn').addEventListener('click', () => {
+    socket.emit('create-room', res => {
+      if (!res.ok) return setMpStatus('Error creating room.');
+      myPlayerId = res.id;
+      document.getElementById('room-code-text').textContent = res.code;
+      document.getElementById('room-code-display').style.display = 'block';
+      setMpStatus('Waiting for friends to join…');
+    });
+  });
+
+  document.getElementById('mp-join-btn').addEventListener('click', () => {
+    const code = document.getElementById('join-code-input').value.trim();
+    if (!code) return setMpStatus('Enter a room code first.');
+    socket.emit('join-room', { code }, res => {
+      if (!res.ok) return setMpStatus(res.error || 'Failed to join.');
+      myPlayerId = res.id;
+      setMpStatus(`Joined room! ${res.players.length} host(s) present.`);
+      res.players.forEach(p => addRemotePlayer(p.id, p.pos));
+      document.getElementById('room-code-display').style.display = 'none';
+    });
+  });
+}
+
+function setMpStatus(msg) {
+  const el = document.getElementById('mp-status');
+  if (el) el.textContent = msg;
+}
+
 // ─── Load all 6 guns ─────────────────────────────────────────
 const fbxGunLoader = new FBXLoader();
 const objLoader    = new OBJLoader();
@@ -610,7 +741,8 @@ function placeGunModel(idx) {
     const gun = raw.clone();
     gun.traverse(c => { if (c.isMesh) c.castShadow = true; });
     scaleAndCenterModel(gun, w.scale);
-    // Adjust vertical position to sit nicely at center of view
+    // Apply per-weapon rotation fix so all guns face the same direction as AR-1
+    if (w.rotFix) gun.rotation.set(...w.rotFix);
     gun.position.y += 0.02;
     gunModelGroup.add(gun);
   } else {
@@ -1052,7 +1184,11 @@ function animate() {
   for (let i = enemies.length - 1; i >= 0; i--) {
     const e = enemies[i];
     if (!e.userData.alive) continue;
-    if (e.userData.mixer) e.userData.mixer.update(dt);
+    if (e.userData.mixer) {
+      // Scale animation speed to match the enemy's actual movement speed
+      e.userData.mixer.timeScale = e.userData.speed / 2.0;
+      e.userData.mixer.update(dt);
+    }
     // Simple gravity — drop toward map floor, clamp at ground level
     if (e.position.y > 0.05) {
       e.position.y = Math.max(0, e.position.y - 12 * dt);
@@ -1081,7 +1217,12 @@ function animate() {
     // Derive yaw from the flat camera forward direction (already computed above)
     playerBody.rotation.y = Math.atan2(camDir.x, camDir.z) + Math.PI;
   }
-  if (playerBodyMixer) playerBodyMixer.update(dt);
+  if (playerBodyMixer) {
+    // Pause animation when still, speed up when sprinting
+    const nowWalking2 = moveDir.lengthSq() > 0;
+    playerBodyMixer.timeScale = nowWalking2 ? (isSprinting ? 1.8 : 1.0) : 0.0;
+    playerBodyMixer.update(dt);
+  }
   if (fpsArmsMixer)   fpsArmsMixer.update(dt);
 
   // Walk ↔ idle animation switch
@@ -1099,9 +1240,26 @@ function animate() {
     prevIsWalking = nowWalking;
   }
 
+  // ── Remote player mixers ──
+  remotePlayers.forEach(({ mixer }) => { if (mixer) mixer.update(dt); });
+
+  // ── Send local position to server (every ~50 ms) ──
+  if (socket && myPlayerId && gameStarted) {
+    mpSendTimer += dt;
+    if (mpSendTimer >= 0.05) {
+      mpSendTimer = 0;
+      socket.emit('player-update', {
+        pos: { x: playerPos.x, y: playerPos.y, z: playerPos.z },
+        rot: Math.atan2(camDir.x, camDir.z),
+        health: health
+      });
+    }
+  }
+
   renderer.render(scene, camera);
 }
 
+initMultiplayer();
 animate();
 </script>
 </body>
